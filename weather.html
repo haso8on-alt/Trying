@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Today's Weather</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      color: #fff;
+      padding: 20px;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 24px;
+      padding: 40px;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 25px 50px rgba(0, 0, 0, 0.4);
+    }
+
+    .status {
+      font-size: 1rem;
+      color: rgba(255, 255, 255, 0.6);
+      margin-bottom: 20px;
+    }
+
+    .location {
+      font-size: 1.1rem;
+      color: rgba(255, 255, 255, 0.75);
+      margin-bottom: 8px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      font-size: 0.85rem;
+    }
+
+    .date {
+      font-size: 1rem;
+      color: rgba(255, 255, 255, 0.5);
+      margin-bottom: 32px;
+    }
+
+    .weather-icon {
+      font-size: 5rem;
+      line-height: 1;
+      margin-bottom: 16px;
+      filter: drop-shadow(0 4px 12px rgba(0,0,0,0.3));
+    }
+
+    .condition {
+      font-size: 1.3rem;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.85);
+      margin-bottom: 8px;
+    }
+
+    .temperature {
+      font-size: 5rem;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -3px;
+      background: linear-gradient(135deg, #74ebd5, #acb6e5);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 32px;
+    }
+
+    .details {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 24px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+      padding-top: 24px;
+    }
+
+    .detail-item {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 14px;
+      padding: 14px 10px;
+    }
+
+    .detail-label {
+      font-size: 0.7rem;
+      color: rgba(255, 255, 255, 0.45);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+
+    .detail-value {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .error {
+      color: #ff6b6b;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+
+    .retry-btn {
+      margin-top: 20px;
+      padding: 10px 24px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 50px;
+      color: #fff;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: background 0.2s;
+    }
+
+    .retry-btn:hover { background: rgba(255, 255, 255, 0.2); }
+
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: #74ebd5;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 20px auto;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="status">Detecting your location…</div>
+    <div class="loading-spinner"></div>
+  </div>
+
+  <script>
+    const WMO_CODES = {
+      0:  { label: 'Clear Sky',           icon: '☀️' },
+      1:  { label: 'Mainly Clear',        icon: '🌤️' },
+      2:  { label: 'Partly Cloudy',       icon: '⛅' },
+      3:  { label: 'Overcast',            icon: '☁️' },
+      45: { label: 'Foggy',               icon: '🌫️' },
+      48: { label: 'Icy Fog',             icon: '🌫️' },
+      51: { label: 'Light Drizzle',       icon: '🌦️' },
+      53: { label: 'Drizzle',             icon: '🌦️' },
+      55: { label: 'Heavy Drizzle',       icon: '🌧️' },
+      61: { label: 'Light Rain',          icon: '🌧️' },
+      63: { label: 'Rain',                icon: '🌧️' },
+      65: { label: 'Heavy Rain',          icon: '🌧️' },
+      71: { label: 'Light Snow',          icon: '🌨️' },
+      73: { label: 'Snow',                icon: '❄️' },
+      75: { label: 'Heavy Snow',          icon: '❄️' },
+      80: { label: 'Light Showers',       icon: '🌦️' },
+      81: { label: 'Showers',             icon: '🌧️' },
+      82: { label: 'Heavy Showers',       icon: '⛈️' },
+      95: { label: 'Thunderstorm',        icon: '⛈️' },
+      96: { label: 'Thunderstorm w/ Hail',icon: '⛈️' },
+      99: { label: 'Thunderstorm w/ Hail',icon: '⛈️' },
+    };
+
+    function wmo(code) {
+      return WMO_CODES[code] ?? { label: 'Unknown', icon: '🌡️' };
+    }
+
+    function formatDate() {
+      return new Date().toLocaleDateString(undefined, {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      });
+    }
+
+    function windDirection(deg) {
+      const dirs = ['N','NE','E','SE','S','SW','W','NW'];
+      return dirs[Math.round(deg / 45) % 8];
+    }
+
+    async function reverseGeocode(lat, lon) {
+      try {
+        const r = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
+          { headers: { 'Accept-Language': 'en' } }
+        );
+        const d = await r.json();
+        const city = d.address.city || d.address.town || d.address.village || d.address.county || '';
+        const country = d.address.country_code?.toUpperCase() || '';
+        return [city, country].filter(Boolean).join(', ');
+      } catch {
+        return `${lat.toFixed(2)}°, ${lon.toFixed(2)}°`;
+      }
+    }
+
+    async function fetchWeather(lat, lon) {
+      const url = new URL('https://api.open-meteo.com/v1/forecast');
+      url.searchParams.set('latitude', lat);
+      url.searchParams.set('longitude', lon);
+      url.searchParams.set('current', [
+        'temperature_2m',
+        'apparent_temperature',
+        'relative_humidity_2m',
+        'wind_speed_10m',
+        'wind_direction_10m',
+        'weathercode',
+      ].join(','));
+      url.searchParams.set('temperature_unit', 'celsius');
+      url.searchParams.set('wind_speed_unit', 'kmh');
+
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('Weather fetch failed');
+      return r.json();
+    }
+
+    function render(locationName, data) {
+      const c = data.current;
+      const { label, icon } = wmo(c.weathercode);
+
+      document.getElementById('card').innerHTML = `
+        <div class="location">${locationName}</div>
+        <div class="date">${formatDate()}</div>
+        <div class="weather-icon">${icon}</div>
+        <div class="condition">${label}</div>
+        <div class="temperature">${Math.round(c.temperature_2m)}°C</div>
+        <div class="details">
+          <div class="detail-item">
+            <div class="detail-label">Feels like</div>
+            <div class="detail-value">${Math.round(c.apparent_temperature)}°C</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Humidity</div>
+            <div class="detail-value">${c.relative_humidity_2m}%</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Wind</div>
+            <div class="detail-value">${Math.round(c.wind_speed_10m)} <span style="font-size:.7rem;opacity:.6">km/h ${windDirection(c.wind_direction_10m)}</span></div>
+          </div>
+        </div>
+      `;
+    }
+
+    function showError(msg) {
+      document.getElementById('card').innerHTML = `
+        <div class="weather-icon">⚠️</div>
+        <div class="error">${msg}</div>
+        <button class="retry-btn" onclick="init()">Try Again</button>
+      `;
+    }
+
+    async function init() {
+      document.getElementById('card').innerHTML = `
+        <div class="status">Detecting your location…</div>
+        <div class="loading-spinner"></div>
+      `;
+
+      if (!navigator.geolocation) {
+        showError('Geolocation is not supported by your browser.');
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        async ({ coords }) => {
+          const { latitude: lat, longitude: lon } = coords;
+          try {
+            document.querySelector('.status').textContent = 'Fetching weather…';
+            const [locationName, weatherData] = await Promise.all([
+              reverseGeocode(lat, lon),
+              fetchWeather(lat, lon),
+            ]);
+            render(locationName, weatherData);
+          } catch (e) {
+            showError('Could not load weather data. Please check your connection.');
+          }
+        },
+        (err) => {
+          const msgs = {
+            1: 'Location access was denied. Please allow location access and try again.',
+            2: 'Your location could not be determined.',
+            3: 'Location request timed out.',
+          };
+          showError(msgs[err.code] ?? 'Could not get your location.');
+        },
+        { timeout: 10000 }
+      );
+    }
+
+    init();
+  </script>
+</body>
+</html>
