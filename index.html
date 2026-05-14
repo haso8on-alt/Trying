@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="My Personal Shopper - Authentic Sephora products in Saudi Arabia. متجري الشخصي - منتجات سيفورا الأصلية في المملكة العربية السعودية">
+  <title>My Personal Shopper | متجري الشخصي</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💄</text></svg>">
+</head>
+<body>
+
+<!-- ===== HEADER ===== -->
+<header class="header">
+  <div class="header-inner">
+    <a href="#" class="logo">
+      <span class="logo-main">My Personal Shopper</span>
+      <span class="logo-sub">SAUDI ARABIA</span>
+    </a>
+
+    <nav class="nav">
+      <a href="#" class="nav-link active">Home</a>
+      <a href="#" class="nav-link">Shop</a>
+      <a href="#" class="nav-link">Brands</a>
+      <a href="#" class="nav-link">Offers</a>
+      <a href="#" class="nav-link">About</a>
+    </nav>
+
+    <div class="header-actions">
+      <button class="lang-btn" onclick="toggleLang()">العربية</button>
+      <button class="search-btn" onclick="openSearch()" aria-label="Search">🔍</button>
+      <button class="wishlist-btn" aria-label="Wishlist">🤍</button>
+      <button class="cart-btn" onclick="openCart()" aria-label="Cart">
+        🛒
+        <span class="cart-badge">0</span>
+      </button>
+      <button class="hamburger" onclick="openMobileNav()" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- ===== MOBILE NAV ===== -->
+<div class="mobile-nav"></div>
+
+<!-- ===== HERO ===== -->
+<section class="hero" id="hero">
+  <div class="hero-inner">
+    <div class="hero-content">
+      <div class="hero-badge">
+        <span class="hero-badge-dot"></span>
+        <span>Official Sephora Products</span>
+      </div>
+      <h1 class="hero-title">
+        Your Beauty<br>Destination in<br>
+        <span class="highlight">Saudi Arabia</span>
+      </h1>
+      <p class="hero-desc">
+        Discover the world's finest beauty brands, delivered to your door. Authentic Sephora products with exclusive Saudi pricing.
+      </p>
+      <div class="hero-ctas">
+        <button class="btn-primary hero-cta-shop" onclick="document.querySelector('#products').scrollIntoView({behavior:'smooth'})">Shop Now</button>
+        <button class="btn-outline hero-cta-explore" onclick="document.querySelector('#brands').scrollIntoView({behavior:'smooth'})">Explore Brands</button>
+      </div>
+      <div class="hero-stats">
+        <div class="stat-item">
+          <div class="stat-value">500+</div>
+          <div class="stat-label">Products</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">80+</div>
+          <div class="stat-label">Brands</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">24h</div>
+          <div class="stat-label">Delivery</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hero-visual">
+      <div class="hero-card">
+        <div class="hero-card-img">💄</div>
+        <div class="hero-card-info">
+          <div class="hero-card-name">Pillow Talk Lipstick</div>
+          <div class="hero-card-price">119 SAR</div>
+        </div>
+      </div>
+      <div class="hero-card">
+        <div class="hero-card-img">🧴</div>
+        <div class="hero-card-info">
+          <div class="hero-card-name">Dewy Skin Cream</div>
+          <div class="hero-card-price">350 SAR</div>
+        </div>
+      </div>
+      <div class="hero-card">
+        <div class="hero-card-img">🌹</div>
+        <div class="hero-card-info">
+          <div class="hero-card-name">Miss Dior Bouquet</div>
+          <div class="hero-card-price">531 SAR</div>
+        </div>
+      </div>
+      <div class="hero-card">
+        <div class="hero-card-img">💋</div>
+        <div class="hero-card-info">
+          <div class="hero-card-name">Rouge Dior Lipstick</div>
+          <div class="hero-card-price">231 SAR</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== MARQUEE ===== -->
+<div class="marquee-section">
+  <div class="marquee-track"></div>
+</div>
+
+<!-- ===== CATEGORIES ===== -->
+<section class="section categories-section" id="categories">
+  <div class="section-header">
+    <div class="section-tag">Categories</div>
+    <h2 class="section-title">Shop by Category</h2>
+    <p class="section-desc">Explore our curated collection of premium beauty products</p>
+  </div>
+  <div class="categories-grid"></div>
+</section>
+
+<!-- ===== PRODUCTS ===== -->
+<section class="products-section" id="products">
+  <div class="section-inner">
+    <div class="section-header">
+      <div class="section-tag">Featured Products</div>
+      <h2 class="section-title">Best Sellers</h2>
+      <p class="section-desc">Handpicked favorites loved by our customers</p>
+    </div>
+
+    <div class="products-toolbar">
+      <div class="products-count">Showing <strong>27</strong> products</div>
+      <div class="products-filters"></div>
+    </div>
+
+    <div class="products-grid"></div>
+  </div>
+</section>
+
+<!-- ===== PROMO BANNER ===== -->
+<section class="promo-banner" id="promo">
+  <div class="promo-inner">
+    <div class="promo-content">
+      <div class="promo-tag">
+        <span>🔥</span>
+        <span>Limited Time Offer</span>
+      </div>
+      <h2 class="promo-title">
+        Exclusive<br><span class="gold">Beauty Sale</span><br>Up to 30% Off
+      </h2>
+      <p class="promo-desc">
+        Don't miss our biggest beauty sale of the season. Premium products at unbeatable prices.
+      </p>
+      <div class="promo-countdown">
+        <div class="countdown-item">
+          <span class="countdown-num" id="cdDays">47</span>
+          <span class="countdown-label">Days</span>
+        </div>
+        <div class="countdown-item">
+          <span class="countdown-num" id="cdHours">23</span>
+          <span class="countdown-label">Hours</span>
+        </div>
+        <div class="countdown-item">
+          <span class="countdown-num" id="cdMins">59</span>
+          <span class="countdown-label">Mins</span>
+        </div>
+        <div class="countdown-item">
+          <span class="countdown-num" id="cdSecs">00</span>
+          <span class="countdown-label">Secs</span>
+        </div>
+      </div>
+      <button class="btn-primary hero-cta-shop" onclick="document.querySelector('#products').scrollIntoView({behavior:'smooth'})">Shop the Sale</button>
+    </div>
+
+    <div class="promo-visual">
+      <div class="promo-card">
+        <span class="promo-card-icon">🚚</span>
+        <div>
+          <div class="promo-card-title">Free Delivery over 300 SAR</div>
+          <div class="promo-card-desc">Same-day in Riyadh, 2-3 days nationwide</div>
+        </div>
+      </div>
+      <div class="promo-card">
+        <span class="promo-card-icon">✅</span>
+        <div class="promo-card-title">100% Authentic</div>
+        <div class="promo-card-desc">Genuine Sephora products</div>
+      </div>
+      <div class="promo-card">
+        <span class="promo-card-icon">↩️</span>
+        <div class="promo-card-title">30-Day Returns</div>
+        <div class="promo-card-desc">Hassle-free return policy</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== BRANDS ===== -->
+<section class="brands-section" id="brands">
+  <div class="brands-inner">
+    <div class="section-header">
+      <div class="section-tag">Top Brands</div>
+      <h2 class="section-title">Featured Brands</h2>
+      <p class="section-desc">Explore collections from the world's most loved beauty brands</p>
+    </div>
+    <div class="brands-grid"></div>
+  </div>
+</section>
+
+<!-- ===== FOOTER ===== -->
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <div class="logo">
+          <span class="logo-main">My Personal Shopper</span>
+          <span class="logo-sub">SAUDI ARABIA</span>
+        </div>
+        <p class="footer-brand-desc">Your trusted destination for authentic Sephora products in Saudi Arabia. Premium beauty delivered to your door.</p>
+        <div class="footer-socials">
+          <a href="#" class="social-btn" aria-label="Instagram">📸</a>
+          <a href="#" class="social-btn" aria-label="Twitter">🐦</a>
+          <a href="#" class="social-btn" aria-label="Snapchat">👻</a>
+          <a href="#" class="social-btn" aria-label="TikTok">🎵</a>
+        </div>
+      </div>
+      <div class="footer-col footer-col-shop">
+        <div class="footer-col-title">Shop</div>
+        <ul class="footer-links">
+          <li><a href="#">Makeup</a></li>
+          <li><a href="#">Skincare</a></li>
+          <li><a href="#">Fragrance</a></li>
+          <li><a href="#">Haircare</a></li>
+          <li><a href="#">Tools & Brushes</a></li>
+        </ul>
+      </div>
+      <div class="footer-col footer-col-help">
+        <div class="footer-col-title">Help</div>
+        <ul class="footer-links">
+          <li><a href="#">Track Order</a></li>
+          <li><a href="#">Return Policy</a></li>
+          <li><a href="#">Shipping Info</a></li>
+          <li><a href="#">Contact Us</a></li>
+          <li><a href="#">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col footer-col-legal">
+        <div class="footer-col-title">Legal</div>
+        <ul class="footer-links">
+          <li><a href="#">Privacy Policy</a></li>
+          <li><a href="#">Terms of Service</a></li>
+          <li><a href="#">Cookies</a></li>
+          <li><a href="#">Sitemap</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span class="footer-copy">© 2025 My Personal Shopper. All rights reserved.</span>
+      <div class="footer-payment-icons">
+        <span class="payment-icon">VISA</span>
+        <span class="payment-icon">MC</span>
+        <span class="payment-icon">MADA</span>
+        <span class="payment-icon">STC</span>
+        <span class="payment-icon">COD</span>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<!-- ===== CART SIDEBAR ===== -->
+<div class="cart-overlay" onclick="closeCart()"></div>
+<div class="cart-sidebar">
+  <div class="cart-header">
+    <div>
+      <h2 class="cart-title">Shopping Cart</h2>
+      <span class="cart-item-count"></span>
+    </div>
+    <button class="cart-close" onclick="closeCart()">✕</button>
+  </div>
+  <div class="cart-items">
+    <div class="cart-empty">
+      <span class="cart-empty-icon">🛒</span>
+      <span class="cart-empty-text">Your cart is empty</span>
+      <span class="cart-empty-sub">Add some products to get started</span>
+    </div>
+  </div>
+  <div class="cart-footer">
+    <div class="cart-summary">
+      <div class="cart-summary-row">
+        <span class="cart-subtotal-label">Subtotal</span>
+        <span class="cart-subtotal">0 SAR</span>
+      </div>
+      <div class="cart-summary-row">
+        <span class="cart-shipping-label">Shipping</span>
+        <span class="cart-shipping-val">Free</span>
+      </div>
+      <div class="cart-summary-row">
+        <span class="cart-vat-label">VAT (15%)</span>
+        <span class="cart-vat">0 SAR</span>
+      </div>
+      <div class="cart-summary-row total">
+        <span class="cart-total-label">Total</span>
+        <span class="cart-total">0 SAR</span>
+      </div>
+    </div>
+    <button class="checkout-btn" onclick="openCheckout()">Checkout</button>
+  </div>
+</div>
+
+<!-- ===== CHECKOUT MODAL ===== -->
+<div class="modal-overlay" onclick="handleModalClick(event)">
+  <div class="modal"></div>
+</div>
+
+<!-- ===== SEARCH OVERLAY ===== -->
+<div class="search-overlay" id="searchOverlay">
+  <div class="search-box">
+    <div class="search-input-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" class="search-input" id="searchInput" placeholder="Search products..."
+        oninput="handleSearch(this.value)" autocomplete="off">
+      <button class="search-close" onclick="closeSearch()">✕</button>
+    </div>
+    <div class="search-results"></div>
+  </div>
+</div>
+
+<!-- ===== TOAST ===== -->
+<div class="toast-container"></div>
+
+<script>
+function handleModalClick(e) {
+  if (e.target === e.currentTarget) closeCheckout();
+}
+</script>
+<script src="script.js"></script>
+</body>
+</html>
