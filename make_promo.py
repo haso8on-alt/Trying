@@ -1,62 +1,65 @@
 #!/usr/bin/env python3
 """
 Arabic Video Promo Generator
-Ken Burns effect, cinematic grade, Arabic captions, fade transitions.
+Ken Burns effect, cinematic grade, Arabic captions, fade transitions, ambient audio.
 
 Place images as image1.jpg ... image6.jpg in the same directory,
 or run as-is to generate a demo with colored gradient placeholders.
 """
 
 import os
-import sys
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import arabic_reshaper
 from bidi.algorithm import get_display
-from moviepy import VideoClip, CompositeVideoClip
+from moviepy import VideoClip, CompositeVideoClip, AudioArrayClip
+import scipy.signal as signal
 
 # ── Output settings ──────────────────────────────────────────────────────────
-OUTPUT_SIZE   = (1920, 1080)
-CANVAS_SCALE  = 1.40          # source image is this much larger than output
-CANVAS_SIZE   = (int(OUTPUT_SIZE[0] * CANVAS_SCALE),
-                 int(OUTPUT_SIZE[1] * CANVAS_SCALE))
-FPS           = 25
-SCENE_DURATION = 5.5          # seconds per scene
-FADE_DURATION  = 0.80         # crossfade duration (seconds)
-FONT_PATH = "/usr/share/fonts/truetype/noto/NotoNaskhArabic-Bold.ttf"
+OUTPUT_SIZE    = (1920, 1080)
+CANVAS_SCALE   = 1.75          # larger canvas → more room for dramatic KB motion
+CANVAS_SIZE    = (int(OUTPUT_SIZE[0] * CANVAS_SCALE),
+                  int(OUTPUT_SIZE[1] * CANVAS_SCALE))
+FPS            = 25
+SCENE_DURATION = 5.5
+FADE_DURATION  = 0.80
+SAMPLE_RATE    = 44100
+
+FONT_PATH  = "/usr/share/fonts/opentype/fonts-hosny-amiri/Amiri-Bold.ttf"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_FILE   = os.path.join(SCRIPT_DIR, "promo.mp4")
+OUTPUT_FILE = os.path.join(SCRIPT_DIR, "promo.mp4")
 
 # ── Scene definitions ────────────────────────────────────────────────────────
-# Order: image_filename, arabic_caption
+# (image_filename, arabic_caption, audio_type)
+# audio_type: "rain" | "wind" | "indoor"
 SCENES = [
-    ("image5.jpg", "وُلدت لي كوثر ياسيد روح"),
-    ("image2.jpg", "الرجل صار مارقا"),
-    ("image3.jpg", "ولاتقف ماليس لم به علم"),
-    ("image6.jpg", "مدينة الفقهاء استأحلت فيها العجائب"),
-    ("image4.jpg", "انتِ فتاة! وانا رجل لي مقامي ومجلسي"),
-    ("image1.jpg", "لقد كانت تهطل هكذا بغزارة حينما خرجت وعمي من القرية"),
+    ("image5.jpg", "وُلدت لي كوثر ياسيد روح",                                "wind"),
+    ("image2.jpg", "الرجل صار مارقا",                                          "wind"),
+    ("image3.jpg", "ولا تقف ما ليس لك به علم",                                "indoor"),
+    ("image6.jpg", "مدينة الفقهاء استأحلت فيها العجائب",                      "wind"),
+    ("image4.jpg", "أنتِ فتاة! وأنا رجل لي مقامي ومجلسي",                    "wind"),
+    ("image1.jpg", "لقد كانت تهطل هكذا بغزارة حينما خرجت وعمي من القرية",    "rain"),
 ]
 
-# Ken Burns per scene: (zoom_start, zoom_end, pan_x, pan_y)
-# zoom > 1 → zoomed in; pan_x/y fraction of output width/height over full duration
+# ── Ken Burns per scene: (zoom_start, zoom_end, pan_x, pan_y) ─────────────
+# Dramatically wider range than before for cinematic feel
 ZOOM_CONFIGS = [
-    (1.25, 1.05,  0.04,  0.00),   # scene 1: slow zoom-out + pan right
-    (1.05, 1.25, -0.04,  0.02),   # scene 2: slow zoom-in + pan left+down
-    (1.20, 1.05,  0.00,  0.03),   # scene 3: zoom-out + pan down
-    (1.05, 1.20,  0.04, -0.02),   # scene 4: zoom-in + pan right+up
-    (1.25, 1.05, -0.04,  0.00),   # scene 5: zoom-out + pan left
-    (1.05, 1.25,  0.02,  0.03),   # scene 6: zoom-in + drift down-right
+    (1.55, 1.00,  0.10,  0.00),   # scene 1: strong zoom-out + drift right
+    (1.00, 1.60, -0.10,  0.05),   # scene 2: strong zoom-in + pan left-down
+    (1.60, 1.05,  0.00,  0.09),   # scene 3: zoom-out + pull down
+    (1.00, 1.65,  0.10, -0.06),   # scene 4: zoom-in + pan right-up
+    (1.55, 1.00, -0.10,  0.00),   # scene 5: zoom-out + drift left
+    (1.00, 1.55,  0.06,  0.10),   # scene 6: zoom-in + sink down
 ]
 
-# Gradient colors for placeholder images (top, bottom) per scene
+# Gradient placeholder colors (top, bottom) per scene
 PLACEHOLDER_COLORS = [
-    ((90, 55, 20),  (140, 80, 35)),   # warm sunset orange
-    ((20, 30, 55),  (35, 55, 90)),    # cool stable blue
-    ((55, 42, 22),  (90, 72, 42)),    # warm indoor amber
-    ((12, 18, 32),  (28, 38, 65)),    # night indigo
-    ((65, 48, 18),  (115, 85, 38)),   # market warm gold
-    ((18, 22, 38),  (32, 42, 62)),    # rain-window slate
+    ((90, 55, 20),  (140, 80, 35)),
+    ((20, 30, 55),  (35, 55, 90)),
+    ((55, 42, 22),  (90, 72, 42)),
+    ((12, 18, 32),  (28, 38, 65)),
+    ((65, 48, 18),  (115, 85, 38)),
+    ((18, 22, 38),  (32, 42, 62)),
 ]
 
 # ── Image helpers ─────────────────────────────────────────────────────────────
@@ -95,9 +98,11 @@ def prepare_canvas(img_pil):
 def ken_burns_frame(canvas, t, duration, z_start, z_end, pan_x, pan_y):
     cw, ch = CANVAS_SIZE
     ow, oh = OUTPUT_SIZE
-    progress = t / max(duration, 1e-6)
+    # Ease-in-out curve (smoothstep) for more cinematic motion feel
+    p = t / max(duration, 1e-6)
+    progress = p * p * (3 - 2 * p)
 
-    zoom  = z_start + (z_end - z_start) * progress
+    zoom   = z_start + (z_end - z_start) * progress
     crop_w = int(ow / zoom)
     crop_h = int(oh / zoom)
 
@@ -106,12 +111,11 @@ def ken_burns_frame(canvas, t, duration, z_start, z_end, pan_x, pan_y):
     cx = cw // 2 + off_x
     cy = ch // 2 + off_y
 
-    l = cx - crop_w // 2
+    l  = cx - crop_w // 2
     t_ = cy - crop_h // 2
-    r = l + crop_w
-    b = t_ + crop_h
+    r  = l + crop_w
+    b  = t_ + crop_h
 
-    # Clamp to canvas bounds
     if l < 0:   r -= l;      l = 0
     if t_ < 0:  b -= t_;     t_ = 0
     if r > cw:  l -= r - cw; r = cw
@@ -124,11 +128,11 @@ def ken_burns_frame(canvas, t, duration, z_start, z_end, pan_x, pan_y):
 
 def cinematic_grade(frame):
     f = frame.astype(np.float32)
-    f *= 0.78                                         # overall darkening
-    lum = frame.max(axis=2).astype(np.float32) / 255
+    f *= 0.78
+    lum    = frame.max(axis=2).astype(np.float32) / 255
     shadow = (1 - lum)
-    f[:, :, 2] += shadow * 22                        # cool blue in shadows
-    f[:, :, 0] += lum * 8                            # subtle warmth in highlights
+    f[:, :, 2] += shadow * 22
+    f[:, :, 0] += lum * 8
     return np.clip(f, 0, 255).astype(np.uint8)
 
 
@@ -141,47 +145,144 @@ def apply_vignette(frame, strength=0.60):
 
 # ── Arabic caption renderer ───────────────────────────────────────────────────
 
+# Configure reshaper to keep all diacritics and use full ligatures
+_reshaper = arabic_reshaper.ArabicReshaper(configuration={
+    'delete_harakat':              False,
+    'support_zwj':                 True,
+    'use_unsupported_chars_as_unshaped': True,
+    'ALEF_WASLA_LETTER_ABOVE_WITH_FATHAH_AND_LETTER': True,
+})
+
+
 def _font(size):
     return ImageFont.truetype(FONT_PATH, size)
 
 
-def render_caption(frame_arr, text, base_size=82):
+def render_caption(frame_arr, text, base_size=90):
     img  = Image.fromarray(frame_arr).convert("RGBA")
     draw = ImageDraw.Draw(img)
     W, H = img.size
 
-    # Arabic shaping + bidi reorder
-    bidi_text = get_display(arabic_reshaper.reshape(text))
+    # Shape Arabic + apply bidi for correct visual order
+    shaped    = _reshaper.reshape(text)
+    bidi_text = get_display(shaped)
 
-    # Auto-shrink font if text is too wide
     font      = _font(base_size)
-    max_width = int(W * 0.88)
+    max_width = int(W * 0.86)
     bbox      = draw.textbbox((0, 0), bidi_text, font=font)
     tw, th    = bbox[2] - bbox[0], bbox[3] - bbox[1]
+
     if tw > max_width:
-        base_size = max(44, int(base_size * max_width / tw))
+        base_size = max(50, int(base_size * max_width / tw))
         font  = _font(base_size)
         bbox  = draw.textbbox((0, 0), bidi_text, font=font)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
     x = (W - tw) // 2
-    y = H - th - 68
+    y = H - th - 72
 
-    # Semi-transparent dark band behind text
+    # Gradient dark band behind text (taller padding for Amiri descenders)
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
-    od.rectangle([(0, y - 22), (W, y + th + 28)], fill=(0, 0, 0, 130))
-    img = Image.alpha_composite(img, overlay)
+    od.rectangle([(0, y - 28), (W, y + th + 36)], fill=(0, 0, 0, 145))
+    img  = Image.alpha_composite(img, overlay)
     draw = ImageDraw.Draw(img)
 
-    # Shadow (8 directions)
-    for dx, dy in [(-3,-3),(-3,3),(3,-3),(3,3),(0,4),(4,0),(-4,0),(0,-4)]:
-        draw.text((x+dx, y+dy), bidi_text, font=font, fill=(0, 0, 0, 230))
+    # Drop shadow (8 directions, slightly heavier than before)
+    for dx, dy in [(-4,-4),(-4,4),(4,-4),(4,4),(0,5),(5,0),(-5,0),(0,-5)]:
+        draw.text((x+dx, y+dy), bidi_text, font=font, fill=(0, 0, 0, 240))
 
-    # White text
+    # Main white text
     draw.text((x, y), bidi_text, font=font, fill=(255, 255, 255, 255))
 
     return np.array(img.convert("RGB"))
+
+# ── Ambient audio generation ──────────────────────────────────────────────────
+
+def _normalize(sig, volume):
+    peak = np.abs(sig).max()
+    if peak < 1e-9:
+        return sig
+    return sig / peak * volume
+
+
+def generate_rain(duration, volume=0.28):
+    """Bandpass-filtered white noise (rain drops sit in 400 Hz – 8 kHz)."""
+    n = int(duration * SAMPLE_RATE)
+    noise = np.random.randn(n).astype(np.float32)
+    sos   = signal.butter(6, [400, 8000], btype='bandpass',
+                          fs=SAMPLE_RATE, output='sos')
+    filtered = signal.sosfilt(sos, noise).astype(np.float32)
+    # Add a quieter low-frequency rumble for realism
+    sos_lo   = signal.butter(4, 120, btype='lowpass',
+                              fs=SAMPLE_RATE, output='sos')
+    rumble   = signal.sosfilt(sos_lo, noise).astype(np.float32)
+    mix = filtered * 0.80 + rumble * 0.20
+    return _normalize(mix, volume)
+
+
+def generate_wind(duration, volume=0.22):
+    """Low-pass filtered noise with a slow LFO for gusting motion."""
+    n = int(duration * SAMPLE_RATE)
+    noise = np.random.randn(n).astype(np.float32)
+    sos   = signal.butter(5, 350, btype='lowpass',
+                          fs=SAMPLE_RATE, output='sos')
+    wind  = signal.sosfilt(sos, noise).astype(np.float32)
+    # Add a mid-frequency whistle layer
+    sos_mid = signal.butter(4, [400, 900], btype='bandpass',
+                             fs=SAMPLE_RATE, output='sos')
+    whistle = signal.sosfilt(sos_mid, noise).astype(np.float32)
+    # Slow LFO (0.2 – 0.4 Hz) to simulate gusts
+    t   = np.linspace(0, duration, n, dtype=np.float32)
+    lfo = 0.55 + 0.45 * np.sin(2 * np.pi * 0.28 * t + np.random.uniform(0, np.pi))
+    mix = (wind * 0.75 + whistle * 0.25) * lfo
+    return _normalize(mix, volume)
+
+
+def generate_indoor(duration, volume=0.08):
+    """Very quiet room tone – high-pass killed noise."""
+    n = int(duration * SAMPLE_RATE)
+    noise = np.random.randn(n).astype(np.float32)
+    sos   = signal.butter(3, 80, btype='highpass',
+                          fs=SAMPLE_RATE, output='sos')
+    tone  = signal.sosfilt(sos, noise).astype(np.float32)
+    sos2  = signal.butter(3, 3000, btype='lowpass',
+                          fs=SAMPLE_RATE, output='sos')
+    tone  = signal.sosfilt(sos2, tone).astype(np.float32)
+    return _normalize(tone, volume)
+
+
+def build_audio_track(scenes, total_duration):
+    """Stitch per-scene ambient audio into one mono track, then duplicate to stereo."""
+    print("  Building ambient audio track …")
+    full = np.zeros(int(total_duration * SAMPLE_RATE), dtype=np.float32)
+    cursor = 0
+    for i, (_, _, audio_type) in enumerate(scenes):
+        seg_dur = SCENE_DURATION
+        if audio_type == "rain":
+            seg = generate_rain(seg_dur)
+        elif audio_type == "indoor":
+            seg = generate_indoor(seg_dur)
+        else:
+            seg = generate_wind(seg_dur)
+
+        # Fade the audio segment edges to avoid clicks at crossfade points
+        fade_len = int(FADE_DURATION * SAMPLE_RATE)
+        ramp_in  = np.linspace(0, 1, fade_len, dtype=np.float32)
+        ramp_out = np.linspace(1, 0, fade_len, dtype=np.float32)
+        seg[:fade_len]  *= ramp_in
+        seg[-fade_len:] *= ramp_out
+
+        end = min(cursor + len(seg), len(full))
+        full[cursor:end] += seg[:end - cursor]
+
+        if i < len(scenes) - 1:
+            cursor += int((SCENE_DURATION - FADE_DURATION) * SAMPLE_RATE)
+
+    full = np.clip(full, -1, 1)
+    # Stereo: duplicate mono channel → shape (n_samples, 2)
+    stereo = np.stack([full, full], axis=1)
+    return AudioArrayClip(stereo, fps=SAMPLE_RATE)
 
 # ── Scene clip builder ────────────────────────────────────────────────────────
 
@@ -206,7 +307,6 @@ def make_scene_clip(canvas, caption, scene_idx):
         alpha = max(0.0, min(1.0, alpha))
         if alpha < 1.0:
             f = (f * alpha).astype(np.uint8)
-
         return f
 
     return VideoClip(make_frame, duration=dur)
@@ -217,6 +317,7 @@ def main():
     print("Arabic Video Promo Generator")
     print("=" * 50)
     print(f"Output  : {OUTPUT_FILE}")
+    print(f"Font    : Amiri Bold (calligraphic Arabic)")
     print(f"Size    : {OUTPUT_SIZE[0]}×{OUTPUT_SIZE[1]} @ {FPS} fps")
     print(f"Scenes  : {len(SCENES)}  ×  {SCENE_DURATION}s  +  {FADE_DURATION}s crossfade")
     print()
@@ -224,8 +325,8 @@ def main():
     clips      = []
     start_time = 0.0
 
-    for i, (filename, caption) in enumerate(SCENES):
-        print(f"Scene {i+1}/{len(SCENES)}: {filename}")
+    for i, (filename, caption, audio_type) in enumerate(SCENES):
+        print(f"Scene {i+1}/{len(SCENES)}: {filename}  [{audio_type}]")
         img    = load_image(filename, i)
         canvas = prepare_canvas(img)
         clip   = make_scene_clip(canvas, caption, i)
@@ -236,16 +337,22 @@ def main():
 
     total_duration = start_time + SCENE_DURATION
     print(f"\nTotal duration : {total_duration:.1f}s")
+
+    audio_clip = build_audio_track(SCENES, total_duration)
+    audio_clip = audio_clip.with_duration(total_duration)
+
     print("Rendering (this takes a few minutes) …\n")
 
     final = CompositeVideoClip(clips, size=OUTPUT_SIZE)
     final = final.with_duration(total_duration)
+    final = final.with_audio(audio_clip)
 
     final.write_videofile(
         OUTPUT_FILE,
         fps=FPS,
         codec="libx264",
-        audio=False,
+        audio_codec="aac",
+        audio_bitrate="128k",
         preset="medium",
         ffmpeg_params=["-crf", "20"],
     )
