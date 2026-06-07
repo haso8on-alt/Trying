@@ -435,13 +435,18 @@ bool CheckMargin(ENUM_ORDER_TYPE type, double lots, double price)
 
 //==========================================================================
 //  DetectFillingMode — returns broker-supported order filling type
+//  Uses SYMBOL_TRADE_EXEMODE (compatible with all MT5 builds)
 //==========================================================================
 ENUM_ORDER_TYPE_FILLING DetectFillingMode()
 {
-   int flags = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_FLAGS);
-   if((flags & SYMBOL_FILLING_FOK) != 0) return ORDER_FILLING_FOK;
-   if((flags & SYMBOL_FILLING_IOC) != 0) return ORDER_FILLING_IOC;
-   return ORDER_FILLING_RETURN;
+   ENUM_SYMBOL_TRADE_EXECUTION execMode =
+      (ENUM_SYMBOL_TRADE_EXECUTION)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_EXEMODE);
+
+   if(execMode == SYMBOL_TRADE_EXECUTION_INSTANT ||
+      execMode == SYMBOL_TRADE_EXECUTION_REQUEST)
+      return ORDER_FILLING_RETURN;
+
+   return ORDER_FILLING_IOC;
 }
 
 //==========================================================================
