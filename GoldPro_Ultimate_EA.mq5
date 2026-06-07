@@ -284,7 +284,7 @@ bool SufficientMargin(ENUM_ORDER_TYPE type, double lot, double price)
       PrintFormat("ERROR: OrderCalcMargin failed. Err=%d", GetLastError());
       return false;
    }
-   double freeMgn = AccountInfoDouble(ACCOUNT_FREEMARGIN);
+   double freeMgn = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
    if(margin > freeMgn * 0.9)
    {
       PrintFormat("WARNING: Need $%.2f margin but only $%.2f free (90%% cap). Trade skipped.",
@@ -332,7 +332,7 @@ void DrawComment(datetime barTime)
 
    double bal   = AccountInfoDouble(ACCOUNT_BALANCE);
    double equ   = AccountInfoDouble(ACCOUNT_EQUITY);
-   double fmgn  = AccountInfoDouble(ACCOUNT_FREEMARGIN);
+   double fmgn  = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
    double drawdown = (bal > 0) ? (bal - equ) / bal * 100.0 : 0.0;
 
    string c = "";
