@@ -2,10 +2,11 @@
 //|                                         GoldPro_H1_EA.mq5        |
 //|                     Professional XAUUSD H1 Expert Advisor        |
 //|         Strategy: EMA Crossover + RSI + ADX + ATR Risk Mgmt      |
+//|                            v2.00                                  |
 //+------------------------------------------------------------------+
-#property copyright   "GoldPro EA v1.00"
-#property version     "1.00"
-#property description "XAUUSD H1 EA — EMA(21/50/200) + RSI(14) + ADX(14) + ATR Risk Management"
+#property copyright   "GoldPro EA v2.00"
+#property version     "2.00"
+#property description "XAUUSD H1 EA — EMA + RSI + ADX + ATR | v2 with lot-risk guard & session filter"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -20,23 +21,30 @@ input int    InpFastEMA       = 21;    // Fast EMA Period
 input int    InpSlowEMA       = 50;    // Slow EMA Period
 input int    InpTrendEMA      = 200;   // Trend Filter EMA Period
 input int    InpRSIPeriod     = 14;    // RSI Period
-input double InpRSIOverbought = 70.0;  // RSI Overbought Level (filter sells above this)
-input double InpRSIOversold   = 30.0;  // RSI Oversold Level  (filter buys below this)
+input double InpRSIOverbought = 70.0;  // RSI Overbought Level
+input double InpRSIOversold   = 30.0;  // RSI Oversold Level
 input int    InpADXPeriod     = 14;    // ADX Period
-input double InpADXMinLevel   = 20.0;  // ADX Minimum (skip trades in choppy markets)
+input double InpADXMinLevel   = 25.0;  // ADX Minimum — skip trades below this (25 = stronger filter)
 input int    InpATRPeriod     = 14;    // ATR Period
 
 input group "─── Risk Management ────────────────────────"
-input double InpRiskPercent   = 1.0;   // Risk Per Trade (% of Balance)
-input double InpATRMultSL     = 1.5;   // ATR Multiplier for Stop Loss
-input double InpRiskReward    = 2.0;   // Risk:Reward Ratio (1 : X)
-input bool   InpUseTrailing   = true;  // Enable ATR Trailing Stop
-input double InpTrailATRMult  = 1.0;   // ATR Multiplier for Trailing Stop
-input double InpMinBalance    = 100.0; // Minimum Balance Required ($)
+input double InpRiskPercent    = 1.0;  // Risk Per Trade (% of Balance)
+input double InpATRMultSL      = 1.5;  // ATR Multiplier for Stop Loss
+input double InpRiskReward     = 2.0;  // Risk:Reward Ratio (1 : X)
+input bool   InpUseTrailing    = true; // Enable ATR Trailing Stop
+input double InpTrailATRMult   = 1.0;  // ATR Multiplier for Trailing Stop
+input double InpMinBalance     = 500.0;// Minimum Balance Required ($) — raise for XAUUSD
+input double InpMaxLotRiskMult = 2.0;  // Max lot-risk multiplier: skip if min-lot risk > X × target risk
+input double InpMaxDailyDD     = 3.0;  // Max Daily Drawdown (%) — stop trading if hit
+
+input group "─── Session Filter ──────────────────────────"
+input bool   InpUseSession    = true;  // Enable Session Filter
+input int    InpSessionStart  = 8;     // Session Start Hour (Server Time, UTC)
+input int    InpSessionEnd    = 22;    // Session End Hour   (Server Time, UTC)
 
 input group "─── Trade Settings ─────────────────────────"
-input int    InpMagicNumber   = 20240101;    // Magic Number
-input int    InpSlippage      = 15;          // Max Slippage (points)
+input int    InpMagicNumber   = 20240101;     // Magic Number
+input int    InpSlippage      = 15;           // Max Slippage (points)
 input string InpComment       = "GoldPro_H1"; // Trade Comment
 
 //==========================================================================
@@ -61,14 +69,16 @@ double g_bufRSI[];
 double g_bufADX[];
 double g_bufATR[];
 
-datetime g_lastBarTime = 0;
+datetime g_lastBarTime  = 0;
+double   g_dayStartBal  = 0.0;   // balance at start of trading day
+datetime g_lastDayReset = 0;     // timestamp of last daily reset
 
 //==========================================================================
 //  OnInit
 //==========================================================================
 int OnInit()
 {
-   //--- Parameter sanity checks
+   //--- Parameter validation
    if(InpFastEMA >= InpSlowEMA)
    {
       Print("ERROR: FastEMA (", InpFastEMA, ") must be < SlowEMA (", InpSlowEMA, ")");
@@ -81,12 +91,17 @@ int OnInit()
    }
    if(InpRiskPercent <= 0.0 || InpRiskPercent > 10.0)
    {
-      Print("ERROR: RiskPercent must be 0.01–10.0. Got: ", InpRiskPercent);
+      Print("ERROR: RiskPercent must be 0.01–10. Got: ", InpRiskPercent);
       return INIT_PARAMETERS_INCORRECT;
    }
    if(InpRiskReward < 1.0)
    {
       Print("ERROR: RiskReward must be >= 1.0. Got: ", InpRiskReward);
+      return INIT_PARAMETERS_INCORRECT;
+   }
+   if(InpSessionStart >= InpSessionEnd)
+   {
+      Print("ERROR: SessionStart must be < SessionEnd");
       return INIT_PARAMETERS_INCORRECT;
    }
 
@@ -96,7 +111,7 @@ int OnInit()
    g_trade.SetTypeFilling(DetectFillingMode());
    g_trade.LogLevel(LOG_LEVEL_ERRORS);
 
-   //--- Create indicator handles on H1 regardless of chart timeframe
+   //--- Create indicator handles (always H1)
    g_hFastEMA  = iMA(_Symbol, PERIOD_H1, InpFastEMA,  0, MODE_EMA, PRICE_CLOSE);
    g_hSlowEMA  = iMA(_Symbol, PERIOD_H1, InpSlowEMA,  0, MODE_EMA, PRICE_CLOSE);
    g_hTrendEMA = iMA(_Symbol, PERIOD_H1, InpTrendEMA, 0, MODE_EMA, PRICE_CLOSE);
@@ -112,7 +127,7 @@ int OnInit()
       return INIT_FAILED;
    }
 
-   //--- Set buffers as time-series (index 0 = most recent)
+   //--- Set buffers as time-series
    ArraySetAsSeries(g_bufFastEMA,  true);
    ArraySetAsSeries(g_bufSlowEMA,  true);
    ArraySetAsSeries(g_bufTrendEMA, true);
@@ -120,15 +135,22 @@ int OnInit()
    ArraySetAsSeries(g_bufADX,      true);
    ArraySetAsSeries(g_bufATR,      true);
 
+   //--- Snapshot balance for daily DD tracking
+   g_dayStartBal  = g_acct.Balance();
+   g_lastDayReset = TimeCurrent();
+
    PrintFormat("══════════════════════════════════════════════════");
-   PrintFormat("  GoldPro H1 EA v1.00 — Initialized Successfully");
+   PrintFormat("  GoldPro H1 EA v2.00 — Initialized Successfully");
    PrintFormat("  Symbol : %s  |  Timeframe : H1", _Symbol);
    PrintFormat("  EMA    : %d / %d / %d", InpFastEMA, InpSlowEMA, InpTrendEMA);
    PrintFormat("  RSI    : %d  (OB=%.0f / OS=%.0f)", InpRSIPeriod, InpRSIOverbought, InpRSIOversold);
    PrintFormat("  ADX    : %d  (Min=%.0f)", InpADXPeriod, InpADXMinLevel);
    PrintFormat("  ATR    : %d  (SL=%.1fx, Trail=%.1fx)", InpATRPeriod, InpATRMultSL, InpTrailATRMult);
-   PrintFormat("  Risk   : %.1f%%  |  RR: 1:%.1f  |  Trailing: %s",
-               InpRiskPercent, InpRiskReward, InpUseTrailing ? "ON" : "OFF");
+   PrintFormat("  Risk   : %.1f%%  |  RR: 1:%.1f  |  MaxDD/day: %.1f%%",
+               InpRiskPercent, InpRiskReward, InpMaxDailyDD);
+   PrintFormat("  Session: %s  (%02d:00 – %02d:00 server time)",
+               InpUseSession ? "ON" : "OFF", InpSessionStart, InpSessionEnd);
+   PrintFormat("  LotGuard: skip if min-lot risk > %.1f× target", InpMaxLotRiskMult);
    PrintFormat("  Magic  : %d  |  Slippage: %d pts", InpMagicNumber, InpSlippage);
    PrintFormat("══════════════════════════════════════════════════");
 
@@ -147,54 +169,106 @@ void OnDeinit(const int reason)
    if(g_hADX      != INVALID_HANDLE) IndicatorRelease(g_hADX);
    if(g_hATR      != INVALID_HANDLE) IndicatorRelease(g_hATR);
    Comment("");
-   PrintFormat("GoldPro EA stopped. Reason code: %d", reason);
+   PrintFormat("GoldPro EA stopped. Reason: %d", reason);
 }
 
 //==========================================================================
-//  OnTick  — main loop
+//  OnTick
 //==========================================================================
 void OnTick()
 {
-   //--- Always: update trailing stop on every tick
+   //--- Reset daily balance snapshot at the start of each new day
+   ResetDailyTracking();
+
+   //--- Trailing stop runs on every tick
    if(InpUseTrailing && HasPosition())
       ApplyTrailing();
 
-   //--- Always: refresh chart overlay
+   //--- Refresh chart overlay
    RefreshChart();
 
-   //--- Process signals only on new H1 bar close
+   //--- New bar gate
    datetime barTime = iTime(_Symbol, PERIOD_H1, 0);
    if(barTime == g_lastBarTime) return;
    g_lastBarTime = barTime;
 
-   //--- Load all indicator buffers
+   //--- Load indicators
    if(!LoadBuffers()) return;
 
-   //--- Only one position at a time
-   if(HasPosition())
-   {
-      PrintFormat("[%s] Position open — waiting for close/TP/SL",
-                  TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES));
-      return;
-   }
+   //--- No new positions if one already open
+   if(HasPosition()) return;
 
-   //--- Minimum balance guard
+   //--- Minimum balance check
    if(g_acct.Balance() < InpMinBalance)
    {
-      PrintFormat("[%s] SKIP — Balance %.2f < MinBalance %.2f",
-                  TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES),
-                  g_acct.Balance(), InpMinBalance);
+      PrintFormat("[SKIP] Balance %.2f < MinBalance %.2f", g_acct.Balance(), InpMinBalance);
       return;
    }
 
-   //--- Evaluate and act on signal
+   //--- Daily drawdown guard
+   if(IsDailyDDBreached()) return;
+
+   //--- Session filter
+   if(InpUseSession && !IsSessionActive()) return;
+
+   //--- Signal → trade
    int sig = GetSignal();
    if(sig ==  1) ExecuteBuy();
    if(sig == -1) ExecuteSell();
 }
 
 //==========================================================================
-//  LoadBuffers — copy indicator data (4 bars is enough for crossover)
+//  ResetDailyTracking — refresh day-start balance at midnight
+//==========================================================================
+void ResetDailyTracking()
+{
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+
+   MqlDateTime dtLast;
+   TimeToStruct(g_lastDayReset, dtLast);
+
+   if(dt.day != dtLast.day)
+   {
+      g_dayStartBal  = g_acct.Balance();
+      g_lastDayReset = TimeCurrent();
+      PrintFormat("[DAY RESET] New day %04d.%02d.%02d — Day start balance: %.2f",
+                  dt.year, dt.mon, dt.day, g_dayStartBal);
+   }
+}
+
+//==========================================================================
+//  IsDailyDDBreached — returns true if daily loss limit reached
+//==========================================================================
+bool IsDailyDDBreached()
+{
+   if(g_dayStartBal <= 0.0) return false;
+
+   double equity  = g_acct.Equity();
+   double ddPct   = (g_dayStartBal - equity) / g_dayStartBal * 100.0;
+
+   if(ddPct >= InpMaxDailyDD)
+   {
+      PrintFormat("[DAILY DD] %.1f%% loss today (%.2f → %.2f). Trading suspended for today.",
+                  ddPct, g_dayStartBal, equity);
+      return true;
+   }
+   return false;
+}
+
+//==========================================================================
+//  IsSessionActive — true if current server time is within allowed window
+//==========================================================================
+bool IsSessionActive()
+{
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   bool active = (dt.hour >= InpSessionStart && dt.hour < InpSessionEnd);
+   return active;
+}
+
+//==========================================================================
+//  LoadBuffers
 //==========================================================================
 bool LoadBuffers()
 {
@@ -209,95 +283,95 @@ bool LoadBuffers()
 }
 
 //==========================================================================
-//  GetSignal — returns 1=Buy, -1=Sell, 0=No Signal
+//  GetSignal — 1=Buy  -1=Sell  0=No signal
 //
-//  Logic:
-//    1. ADX > threshold → confirmed trending market
-//    2. EMA(Fast) crosses EMA(Slow) on last closed bar
-//    3. Price AND Fast EMA both on correct side of EMA(200) → trend alignment
-//    4. RSI confirms momentum without being at extreme
+//  Conditions (all must be true simultaneously):
+//    1. ADX > threshold        → confirmed trend, not choppy
+//    2. EMA(fast) × EMA(slow)  → fresh crossover on last closed bar
+//    3. Price + FastEMA both on correct side of EMA(200) → macro trend
+//    4. RSI in valid momentum zone (not extreme)
 //==========================================================================
 int GetSignal()
 {
-   //--- Last closed bar = index 1; bar before = index 2
-   double fastNow   = g_bufFastEMA[1],  fastPrev  = g_bufFastEMA[2];
-   double slowNow   = g_bufSlowEMA[1],  slowPrev  = g_bufSlowEMA[2];
-   double trendNow  = g_bufTrendEMA[1];
-   double rsiNow    = g_bufRSI[1];
-   double adxNow    = g_bufADX[1];
-   double close1    = iClose(_Symbol, PERIOD_H1, 1);
+   double fastNow  = g_bufFastEMA[1],  fastPrev  = g_bufFastEMA[2];
+   double slowNow  = g_bufSlowEMA[1],  slowPrev  = g_bufSlowEMA[2];
+   double trendNow = g_bufTrendEMA[1];
+   double rsiNow   = g_bufRSI[1];
+   double adxNow   = g_bufADX[1];
+   double close1   = iClose(_Symbol, PERIOD_H1, 1);
 
-   //--- 1. ADX filter: skip choppy/ranging markets
-   if(adxNow < InpADXMinLevel)
-      return 0;
+   if(adxNow < InpADXMinLevel) return 0;
 
-   //--- 2. EMA crossover detection
    bool bullCross = (fastPrev <= slowPrev) && (fastNow > slowNow);
    bool bearCross = (fastPrev >= slowPrev) && (fastNow < slowNow);
 
-   //--- 3. Trend alignment via 200 EMA
    bool uptrend   = (close1 > trendNow) && (fastNow > trendNow);
    bool downtrend = (close1 < trendNow) && (fastNow < trendNow);
 
-   //--- 4. RSI: confirm momentum, reject extreme zones
    bool rsiBuy    = (rsiNow >= 45.0) && (rsiNow < InpRSIOverbought);
    bool rsiSell   = (rsiNow <= 55.0) && (rsiNow > InpRSIOversold);
 
    if(bullCross && uptrend && rsiBuy)
    {
-      PrintFormat("[BUY SIGNAL] Bar=%s | FastEMA=%.2f > SlowEMA=%.2f | Trend=%.2f | RSI=%.1f | ADX=%.1f",
-                  TimeToString(iTime(_Symbol, PERIOD_H1, 1), TIME_DATE|TIME_MINUTES),
+      PrintFormat("[BUY SIG] %s | EMA=%.2f>%.2f | Trend=%.2f | RSI=%.1f | ADX=%.1f",
+                  TimeToString(iTime(_Symbol,PERIOD_H1,1),TIME_DATE|TIME_MINUTES),
                   fastNow, slowNow, trendNow, rsiNow, adxNow);
       return 1;
    }
-
    if(bearCross && downtrend && rsiSell)
    {
-      PrintFormat("[SELL SIGNAL] Bar=%s | FastEMA=%.2f < SlowEMA=%.2f | Trend=%.2f | RSI=%.1f | ADX=%.1f",
-                  TimeToString(iTime(_Symbol, PERIOD_H1, 1), TIME_DATE|TIME_MINUTES),
+      PrintFormat("[SELL SIG] %s | EMA=%.2f<%.2f | Trend=%.2f | RSI=%.1f | ADX=%.1f",
+                  TimeToString(iTime(_Symbol,PERIOD_H1,1),TIME_DATE|TIME_MINUTES),
                   fastNow, slowNow, trendNow, rsiNow, adxNow);
       return -1;
    }
-
    return 0;
 }
 
 //==========================================================================
-//  CalcLots — risk-based position sizing
-//  Formula: lots = (balance × risk%) / (SL_distance_in_price × tickValue/tickSize)
+//  CalcLots — risk-based position sizing with minimum-lot guard
+//
+//  KEY FIX v2: If minimum lot would risk more than InpMaxLotRiskMult × target,
+//  we skip the trade completely rather than silently over-risk the account.
+//  This protects small accounts (e.g. $200) from XAUUSD lot constraints.
 //==========================================================================
 double CalcLots(double slDist)
 {
-   if(slDist <= 0.0)
-   {
-      Print("ERROR: CalcLots — invalid slDist=", slDist);
-      return 0.0;
-   }
+   if(slDist <= 0.0) { Print("ERROR: CalcLots — slDist=0"); return 0.0; }
 
-   double riskAmt   = g_acct.Balance() * InpRiskPercent / 100.0;
-   double tickVal   = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tickSz    = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tickVal = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSz  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tickSz <= 0.0 || tickVal <= 0.0) { Print("ERROR: CalcLots — bad tick data"); return 0.0; }
 
-   if(tickSz <= 0.0 || tickVal <= 0.0)
-   {
-      Print("ERROR: CalcLots — invalid tick data. TickVal=", tickVal, " TickSz=", tickSz);
-      return 0.0;
-   }
-
-   //--- USD loss per 1 lot if price moves slDist against us
-   double lossPerLot = (slDist / tickSz) * tickVal;
+   double riskTarget  = g_acct.Balance() * InpRiskPercent / 100.0;
+   double lossPerLot  = (slDist / tickSz) * tickVal;
    if(lossPerLot <= 0.0) return 0.0;
 
-   double lots    = riskAmt / lossPerLot;
-   double step    = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   //--- Check if minimum lot already exceeds acceptable risk
+   double minLot       = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double minLotLoss   = minLot * lossPerLot;                       // actual loss at min lot
+   double maxAllowed   = riskTarget * InpMaxLotRiskMult;            // e.g. 2× target
+
+   if(minLotLoss > maxAllowed)
+   {
+      PrintFormat("[LOT GUARD] SKIP — min lot (%.2f) would risk $%.2f > %.1f× target $%.2f. "
+                  "Increase balance or reduce ATR_SL multiplier.",
+                  minLot, minLotLoss, InpMaxLotRiskMult, riskTarget);
+      return 0.0;
+   }
+
+   double lots   = riskTarget / lossPerLot;
+   double step   = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
 
    lots = MathFloor(lots / step) * step;
    lots = MathMax(minLot, MathMin(maxLot, lots));
 
-   PrintFormat("[LOTS] Balance=%.2f | Risk=%.2f$ | SL=%.4f | LossPerLot=%.2f | Lots=%.2f",
-               g_acct.Balance(), riskAmt, slDist, lossPerLot, lots);
+   //--- Verify actual risk after rounding
+   double actualRisk = lots * lossPerLot;
+   PrintFormat("[LOTS] Balance=%.2f | Target risk=$%.2f | Actual risk=$%.2f (%.2f%%) | Lots=%.2f",
+               g_acct.Balance(), riskTarget, actualRisk,
+               actualRisk / g_acct.Balance() * 100.0, lots);
    return lots;
 }
 
@@ -314,17 +388,16 @@ void ExecuteBuy()
    double tp   = NormalizeDouble(ask + tpD, _Digits);
    double lots = CalcLots(slD);
 
-   if(lots <= 0.0)          { Print("ERROR: ExecuteBuy — lot calc failed"); return; }
+   if(lots <= 0.0)                            { Print("ERROR: ExecuteBuy — lot calc returned 0"); return; }
    if(!CheckMargin(ORDER_TYPE_BUY, lots, ask)) return;
 
-   PrintFormat("[BUY ORDER] Ask=%.2f | SL=%.2f (-%.2f) | TP=%.2f (+%.2f) | Lots=%.2f | ATR=%.2f",
+   PrintFormat("[BUY] Ask=%.2f | SL=%.2f (-$%.0f) | TP=%.2f (+$%.0f) | Lots=%.2f | ATR=%.2f",
                ask, sl, slD, tp, tpD, lots, atr);
 
    if(g_trade.Buy(lots, _Symbol, ask, sl, tp, InpComment))
-      PrintFormat("[SUCCESS] BUY #%I64u opened @ %.2f", g_trade.ResultOrder(), g_trade.ResultPrice());
+      PrintFormat("[OK] BUY #%I64u @ %.2f", g_trade.ResultOrder(), g_trade.ResultPrice());
    else
-      PrintFormat("[ERROR] BUY failed — RetCode=%d : %s",
-                  g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
+      PrintFormat("[ERR] BUY failed — %d : %s", g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
 }
 
 //==========================================================================
@@ -340,21 +413,21 @@ void ExecuteSell()
    double tp   = NormalizeDouble(bid - tpD, _Digits);
    double lots = CalcLots(slD);
 
-   if(lots <= 0.0)           { Print("ERROR: ExecuteSell — lot calc failed"); return; }
+   if(lots <= 0.0)                              { Print("ERROR: ExecuteSell — lot calc returned 0"); return; }
    if(!CheckMargin(ORDER_TYPE_SELL, lots, bid)) return;
 
-   PrintFormat("[SELL ORDER] Bid=%.2f | SL=%.2f (+%.2f) | TP=%.2f (-%.2f) | Lots=%.2f | ATR=%.2f",
+   PrintFormat("[SELL] Bid=%.2f | SL=%.2f (+$%.0f) | TP=%.2f (-$%.0f) | Lots=%.2f | ATR=%.2f",
                bid, sl, slD, tp, tpD, lots, atr);
 
    if(g_trade.Sell(lots, _Symbol, bid, sl, tp, InpComment))
-      PrintFormat("[SUCCESS] SELL #%I64u opened @ %.2f", g_trade.ResultOrder(), g_trade.ResultPrice());
+      PrintFormat("[OK] SELL #%I64u @ %.2f", g_trade.ResultOrder(), g_trade.ResultPrice());
    else
-      PrintFormat("[ERROR] SELL failed — RetCode=%d : %s",
-                  g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
+      PrintFormat("[ERR] SELL failed — %d : %s", g_trade.ResultRetcode(), g_trade.ResultRetcodeDescription());
 }
 
 //==========================================================================
-//  ApplyTrailing — ATR-based trailing stop (moves only in favorable direction)
+//  ApplyTrailing — ATR trailing stop, moves only in favorable direction,
+//  activates only after trade enters profit
 //==========================================================================
 void ApplyTrailing()
 {
@@ -364,42 +437,40 @@ void ApplyTrailing()
 
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
-      if(!g_pos.SelectByIndex(i))                                continue;
-      if(g_pos.Symbol() != _Symbol)                             continue;
-      if(g_pos.Magic()  != (ulong)InpMagicNumber)               continue;
+      if(!g_pos.SelectByIndex(i))                       continue;
+      if(g_pos.Symbol() != _Symbol)                     continue;
+      if(g_pos.Magic()  != (ulong)InpMagicNumber)       continue;
 
-      ulong  tk   = g_pos.Ticket();
-      double cSL  = g_pos.StopLoss();
-      double cTP  = g_pos.TakeProfit();
-      double op   = g_pos.PriceOpen();
+      ulong  tk  = g_pos.Ticket();
+      double cSL = g_pos.StopLoss();
+      double cTP = g_pos.TakeProfit();
+      double op  = g_pos.PriceOpen();
 
       if(g_pos.PositionType() == POSITION_TYPE_BUY)
       {
          double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
          double nSL = NormalizeDouble(bid - trailD, _Digits);
-         //--- Move SL up only; only after trade is in profit
          if(nSL > cSL + _Point && nSL > op)
          {
             if(g_trade.PositionModify(tk, nSL, cTP))
-               PrintFormat("[TRAIL BUY]  #%I64u  SL: %.2f → %.2f  (Bid=%.2f)", tk, cSL, nSL, bid);
+               PrintFormat("[TRAIL BUY]  #%I64u  %.2f → %.2f", tk, cSL, nSL);
          }
       }
       else if(g_pos.PositionType() == POSITION_TYPE_SELL)
       {
          double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
          double nSL = NormalizeDouble(ask + trailD, _Digits);
-         //--- Move SL down only; only after trade is in profit
          if((cSL == 0.0 || nSL < cSL - _Point) && nSL < op)
          {
             if(g_trade.PositionModify(tk, nSL, cTP))
-               PrintFormat("[TRAIL SELL] #%I64u  SL: %.2f → %.2f  (Ask=%.2f)", tk, cSL, nSL, ask);
+               PrintFormat("[TRAIL SELL] #%I64u  %.2f → %.2f", tk, cSL, nSL);
          }
       }
    }
 }
 
 //==========================================================================
-//  HasPosition — checks for any open position by this EA on this symbol
+//  HasPosition
 //==========================================================================
 bool HasPosition()
 {
@@ -413,7 +484,7 @@ bool HasPosition()
 }
 
 //==========================================================================
-//  CheckMargin — verifies sufficient free margin before opening
+//  CheckMargin
 //==========================================================================
 bool CheckMargin(ENUM_ORDER_TYPE type, double lots, double price)
 {
@@ -423,19 +494,16 @@ bool CheckMargin(ENUM_ORDER_TYPE type, double lots, double price)
       Print("ERROR: OrderCalcMargin failed");
       return false;
    }
-   double freeMargin = g_acct.FreeMargin();
-   if(freeMargin < margin * 1.2) // require 20% buffer above minimum
+   if(g_acct.FreeMargin() < margin * 1.2)
    {
-      PrintFormat("WARNING: Free margin %.2f < required %.2f (×1.2 safety buffer)",
-                  freeMargin, margin * 1.2);
+      PrintFormat("WARNING: Free margin %.2f < required %.2f (×1.2)", g_acct.FreeMargin(), margin * 1.2);
       return false;
    }
    return true;
 }
 
 //==========================================================================
-//  DetectFillingMode — returns broker-supported order filling type
-//  Uses SYMBOL_TRADE_EXEMODE (compatible with all MT5 builds)
+//  DetectFillingMode — uses SYMBOL_TRADE_EXEMODE (all MT5 builds)
 //==========================================================================
 ENUM_ORDER_TYPE_FILLING DetectFillingMode()
 {
@@ -450,19 +518,29 @@ ENUM_ORDER_TYPE_FILLING DetectFillingMode()
 }
 
 //==========================================================================
-//  RefreshChart — live info overlay on the chart
+//  RefreshChart
 //==========================================================================
 void RefreshChart()
 {
    string D  = "\n";
    string hr = "────────────────────────────" + D;
 
+   double ddPct = (g_dayStartBal > 0)
+                  ? (g_dayStartBal - g_acct.Equity()) / g_dayStartBal * 100.0
+                  : 0.0;
+   string ddStr = StringFormat("%.1f%% / %.1f%%", MathMax(0, ddPct), InpMaxDailyDD);
+
+   MqlDateTime dt; TimeToStruct(TimeCurrent(), dt);
+   string sessionStr = (InpUseSession && (dt.hour < InpSessionStart || dt.hour >= InpSessionEnd))
+                       ? " [OUT OF SESSION]" : "";
+
    string s  = hr;
-   s += "   GoldPro H1 EA  v1.00" + D;
+   s += "  GoldPro H1 EA  v2.00" + D;
    s += hr;
-   s += StringFormat("Balance  : %10.2f %s" + D, g_acct.Balance(),    g_acct.Currency());
-   s += StringFormat("Equity   : %10.2f %s" + D, g_acct.Equity(),     g_acct.Currency());
-   s += StringFormat("Margin   : %10.1f %%" + D, g_acct.MarginLevel());
+   s += StringFormat("Balance  : %.2f %s"   + D, g_acct.Balance(),    g_acct.Currency());
+   s += StringFormat("Equity   : %.2f %s"   + D, g_acct.Equity(),     g_acct.Currency());
+   s += StringFormat("Daily DD : %s"        + D, ddStr);
+   s += StringFormat("Margin   : %.1f%%"    + D, g_acct.MarginLevel());
    s += hr;
 
    if(HasPosition())
@@ -474,38 +552,36 @@ void RefreshChart()
 
          string dir = (g_pos.PositionType() == POSITION_TYPE_BUY) ? "▲ BUY" : "▼ SELL";
          double pnl = g_pos.Profit() + g_pos.Swap() + g_pos.Commission();
-         string pnlStr = StringFormat("%+.2f %s", pnl, g_acct.Currency());
 
-         s += StringFormat("Direction: %s" + D, dir);
-         s += StringFormat("Lots     : %.2f" + D,    g_pos.Volume());
-         s += StringFormat("Open     : %.2f" + D,    g_pos.PriceOpen());
-         s += StringFormat("Current  : %.2f" + D,    g_pos.PriceCurrent());
-         s += StringFormat("SL       : %.2f" + D,    g_pos.StopLoss());
-         s += StringFormat("TP       : %.2f" + D,    g_pos.TakeProfit());
-         s += StringFormat("P/L      : %s"   + D,    pnlStr);
+         s += StringFormat("Type     : %s"   + D, dir);
+         s += StringFormat("Lots     : %.2f" + D, g_pos.Volume());
+         s += StringFormat("Open     : %.2f" + D, g_pos.PriceOpen());
+         s += StringFormat("Current  : %.2f" + D, g_pos.PriceCurrent());
+         s += StringFormat("SL       : %.2f" + D, g_pos.StopLoss());
+         s += StringFormat("TP       : %.2f" + D, g_pos.TakeProfit());
+         s += StringFormat("P/L      : %+.2f %s" + D, pnl, g_acct.Currency());
       }
    }
    else
    {
-      s += "Status   : Waiting for signal..." + D;
+      s += "Status   : Waiting" + sessionStr + D;
       if(ArraySize(g_bufFastEMA) > 1)
       {
          s += StringFormat("FastEMA  : %.2f" + D, g_bufFastEMA[1]);
          s += StringFormat("SlowEMA  : %.2f" + D, g_bufSlowEMA[1]);
          s += StringFormat("TrndEMA  : %.2f" + D, g_bufTrendEMA[1]);
          s += StringFormat("RSI      : %.1f" + D, g_bufRSI[1]);
-         s += StringFormat("ADX      : %.1f%s" + D,
-                           g_bufADX[1],
-                           g_bufADX[1] < InpADXMinLevel ? " [CHOPPY]" : " [TREND]");
+         s += StringFormat("ADX      : %.1f%s" + D, g_bufADX[1],
+                           g_bufADX[1] < InpADXMinLevel ? " ◄ CHOPPY" : " ◄ TREND OK");
       }
    }
-
    s += hr;
-   s += StringFormat("EMA  : %d / %d / %d" + D, InpFastEMA, InpSlowEMA, InpTrendEMA);
-   s += StringFormat("Risk : %.1f%%  RR: 1:%.1f  SL: %.1fx ATR" + D,
+   s += StringFormat("EMA  : %d/%d/%d  ADX>%.0f" + D,
+                     InpFastEMA, InpSlowEMA, InpTrendEMA, InpADXMinLevel);
+   s += StringFormat("Risk : %.1f%%  RR:1:%.1f  SL:%.1fxATR" + D,
                      InpRiskPercent, InpRiskReward, InpATRMultSL);
-   s += StringFormat("Trail: %s (%.1fx ATR)" + D,
-                     InpUseTrailing ? "ON" : "OFF", InpTrailATRMult);
+   s += StringFormat("Trail: %s  Session: %02d–%02d" + D,
+                     InpUseTrailing ? "ON" : "OFF", InpSessionStart, InpSessionEnd);
 
    Comment(s);
 }
