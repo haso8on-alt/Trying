@@ -45,11 +45,10 @@ input int    InpATRPeriod     = 14;    // ATR Period
 
 input group "─── Volatility Filter ───────────────────────"
 input int    InpVolATRPeriod  = 50;    // ATR Average Period
-input double InpVolATRMult    = 1.0;   // Vol Threshold: ATR > AvgATR × this
-//                                     // Try 1.2 if drawdown is still high
+input double InpVolATRMult    = 1.1;   // Vol Threshold: ATR > AvgATR × this
 
 input group "─── Risk Management ────────────────────────"
-input double InpRiskPercent    = 1.0;  // Risk Per Trade (% of Balance)
+input double InpRiskPercent    = 0.7;  // Risk Per Trade (% of Balance)
 input double InpATRMultSL      = 2.0;  // ATR Multiplier for Stop Loss
 input double InpRiskReward     = 2.0;  // Risk:Reward Ratio (1 : X)
 input double InpMinBalance     = 500.0;// Minimum Balance Required ($)
