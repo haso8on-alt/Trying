@@ -74,6 +74,9 @@ input int    InpMagicNumber   = 20240101;     // Magic Number
 input int    InpSlippage      = 15;           // Max Slippage (points)
 input string InpComment       = "GoldPro_H1"; // Trade Comment
 
+input group "─── Debug ───────────────────────────────────"
+input bool   InpDebug         = false; // Show filter results every bar (Experts tab)
+
 //==========================================================================
 //  GLOBALS
 //==========================================================================
@@ -388,23 +391,14 @@ int GetSignal()
    double adxNow   = g_bufADX[1];
    double atrNow   = g_bufATR[1];
    double close1   = iClose(_Symbol, PERIOD_H1, 1);
+   string barStr   = TimeToString(iTime(_Symbol, PERIOD_H1, 1), TIME_DATE|TIME_MINUTES);
 
    //--- Volatility filter
-   double atrAvg = CalcATRAverage();
-   if(atrNow < atrAvg * InpVolATRMult)
-   {
-      static datetime lastLog = 0;
-      if(TimeCurrent() - lastLog >= 3600)
-      {
-         PrintFormat("[VOL FILTER] ATR=%.2f < AvgATR=%.2f × %.1f — skipping",
-                     atrNow, atrAvg, InpVolATRMult);
-         lastLog = TimeCurrent();
-      }
-      return 0;
-   }
+   double atrAvg   = CalcATRAverage();
+   bool   volOK    = (atrNow >= atrAvg * InpVolATRMult);
 
    //--- ADX filter
-   if(adxNow < InpADXMinLevel) return 0;
+   bool adxOK = (adxNow >= InpADXMinLevel);
 
    //--- MACD crossover
    bool bullCross = (macdPrev <= sigPrev) && (macdNow > sigNow);
@@ -418,18 +412,50 @@ int GetSignal()
    bool rsiBuy  = (rsiNow >= 40.0) && (rsiNow < InpRSIOverbought);
    bool rsiSell = (rsiNow <= 60.0) && (rsiNow > InpRSIOversold);
 
+   if(InpDebug)
+   {
+      string macdDir = bullCross ? "▲CROSS-UP" : (bearCross ? "▼CROSS-DN" : "no-cross");
+      string trendDir = uptrend ? "▲above EMA200" : (downtrend ? "▼below EMA200" : "=on EMA200");
+      PrintFormat(
+         "[DBG] %s | "
+         "VOL:%s(%.2f/%.2f×%.1f) | "
+         "ADX:%s(%.1f) | "
+         "MACD:%s(%.4f vs %.4f) | "
+         "TREND:%s(%.2f) | "
+         "RSI:%.1f(buy%s sell%s)",
+         barStr,
+         volOK  ? "✓" : "✗", atrNow, atrAvg, InpVolATRMult,
+         adxOK  ? "✓" : "✗", adxNow,
+         macdDir, macdNow, sigNow,
+         trendDir, trendNow,
+         rsiNow,
+         rsiBuy  ? "✓" : "✗",
+         rsiSell ? "✓" : "✗"
+      );
+   }
+
+   if(!volOK)
+   {
+      if(!InpDebug)
+      {
+         static datetime lastLog = 0;
+         if(TimeCurrent() - lastLog >= 3600)
+         { PrintFormat("[VOL FILTER] ATR=%.2f < AvgATR=%.2f × %.1f — skipping", atrNow, atrAvg, InpVolATRMult); lastLog = TimeCurrent(); }
+      }
+      return 0;
+   }
+   if(!adxOK) return 0;
+
    if(bullCross && uptrend && rsiBuy)
    {
       PrintFormat("[BUY SIG] %s | MACD=%.4f>%.4f | RSI=%.1f | ADX=%.1f | ATR=%.2f(Avg=%.2f)",
-                  TimeToString(iTime(_Symbol,PERIOD_H1,1),TIME_DATE|TIME_MINUTES),
-                  macdNow, sigNow, rsiNow, adxNow, atrNow, atrAvg);
+                  barStr, macdNow, sigNow, rsiNow, adxNow, atrNow, atrAvg);
       return 1;
    }
    if(bearCross && downtrend && rsiSell)
    {
       PrintFormat("[SELL SIG] %s | MACD=%.4f<%.4f | RSI=%.1f | ADX=%.1f | ATR=%.2f(Avg=%.2f)",
-                  TimeToString(iTime(_Symbol,PERIOD_H1,1),TIME_DATE|TIME_MINUTES),
-                  macdNow, sigNow, rsiNow, adxNow, atrNow, atrAvg);
+                  barStr, macdNow, sigNow, rsiNow, adxNow, atrNow, atrAvg);
       return -1;
    }
    return 0;
